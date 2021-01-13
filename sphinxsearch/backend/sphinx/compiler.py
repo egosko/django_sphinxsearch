@@ -1,7 +1,7 @@
 # coding: utf-8
 from collections import OrderedDict
 import re
-from django.core.exceptions import FieldError
+from django.core.exceptions import FieldError, EmptyResultSet
 from django.db import models
 from django.db.models.expressions import Random
 from django.db.models.lookups import Search, Exact
@@ -104,21 +104,27 @@ class SphinxQLCompiler(compiler.SQLCompiler):
 
         connection = self.connection
 
-        where_sql, where_params = where.as_sql(self, connection)
-        # moving where conditions to SELECT clause because of better support
-        # of SQL expressions in sphinxsearch.
+        try:
+            where_sql, where_params = where.as_sql(self, connection)
+        except EmptyResultSet:
+            # Where node compiled to always-false condition, but we still need
+            # to call pre_sql_setup() and other methods by super().as_sql
+            pass
+        else:
+            # moving where conditions to SELECT clause because of better support
+            # of SQL expressions in sphinxsearch.
 
-        if where_sql:
-            # Without annotation queryset.count() receives 1 as where_result
-            # and count it as aggregation result.
-            self.query.add_annotation(
-                sqls.SphinxWhereExpression(where_sql, where_params),
-                '__where_result')
-            # almost all where conditions are now in SELECT clause, so
-            # WHERE should contain only test against that conditions are true
-            self.query.add_extra(
-                None, None,
-                ['__where_result = %s'], (True,), None, None)
+            if where_sql:
+                # Without annotation queryset.count() receives 1 as where_result
+                # and count it as aggregation result.
+                self.query.add_annotation(
+                    sqls.SphinxWhereExpression(where_sql, where_params),
+                    '__where_result')
+                # almost all where conditions are now in SELECT clause, so
+                # WHERE should contain only test against that conditions are true
+                self.query.add_extra(
+                    None, None,
+                    ['__where_result = %s'], (True,), None, None)
 
         sql, args = super(SphinxQLCompiler, self).as_sql(with_limits,
                                                          with_col_aliases)
